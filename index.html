@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+\<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6,7 +6,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Expense Tracker">
-    <link rel="manifest" href="manifest.json">
     <title>Expense Tracker</title>
     <style>
         * {
@@ -337,7 +336,7 @@
             color: var(--success);
         }
 
-        .delete-btn {
+        .icon-btn {
             background: none;
             border: none;
             color: var(--text-secondary);
@@ -591,10 +590,17 @@
             border-bottom: 1px solid var(--border);
         }
 
-        .add-category-input {
+        .checkbox-label {
             display: flex;
+            align-items: center;
             gap: 8px;
-            margin-top: 12px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -702,15 +708,18 @@
             </div>
 
             <div class="section-header">
-                <div class="section-title">Data</div>
+                <div class="section-title">Export Data</div>
             </div>
             <div class="card">
-                <button class="btn btn-secondary" onclick="exportData()">📤 Export Data</button>
+                <button class="btn btn-primary" onclick="generatePDF()">📊 Generate Analysis Report (PDF)</button>
+                <p style="margin-top: 12px; font-size: 13px; color: var(--text-secondary);">
+                    Creates a professional PDF with charts, insights, and AI-powered spending analysis
+                </p>
             </div>
         </div>
     </div>
 
-    <!-- Add Transaction Modal -->
+    <!-- Add/Edit Transaction Modal -->
     <div class="modal" id="transaction-modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -744,6 +753,16 @@
                     <input type="date" id="transaction-date">
                 </div>
 
+                <div class="input-group" id="recurring-section">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="is-recurring">
+                        <span>Recurring (one-time monthly payment)</span>
+                    </label>
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+                        Mark expenses like rent, EMI, subscriptions that happen once per month
+                    </p>
+                </div>
+
                 <button class="btn btn-primary" onclick="addTransaction()" id="submit-btn">Add Expense</button>
             </div>
         </div>
@@ -768,6 +787,9 @@
         </button>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <script>
         const DEFAULT_EXPENSE_CATEGORIES = [
             '🍔 Food & Dining',
@@ -806,16 +828,15 @@
 
         let currentModalType = 'expense';
         let selectedCategory = '';
+        let editingTransactionId = null;
 
         // Load data
         function loadData() {
             const saved = localStorage.getItem('expenseTrackerData');
             if (saved) {
                 const loaded = JSON.parse(saved);
-                // Migrate old data if exists
                 if (loaded.expenses && !loaded.transactions) {
-                    data.transactions = loaded.expenses.map(e => ({...e, type: 'expense'}));
-                    // Keep old income if it exists
+                    data.transactions = loaded.expenses.map(e => ({...e, type: 'expense', isRecurring: false}));
                     if (loaded.income) {
                         data.monthlyIncome = loaded.income;
                     }
@@ -826,10 +847,15 @@
                 }
             }
             
-            // Ensure categories exist
             if (!data.expenseCategories) data.expenseCategories = DEFAULT_EXPENSE_CATEGORIES;
             if (!data.incomeCategories) data.incomeCategories = DEFAULT_INCOME_CATEGORIES;
             if (!data.limits) data.limits = { monthly: 0, weekly: 0 };
+            
+            // Ensure isRecurring exists on all transactions
+            data.transactions = data.transactions.map(t => ({
+                ...t,
+                isRecurring: t.isRecurring || false
+            }));
             
             updateUI();
         }
@@ -871,35 +897,51 @@
             return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
         }
 
-        function openModal(type) {
+        function openModal(type, transactionId = null) {
             currentModalType = type;
             selectedCategory = '';
+            editingTransactionId = transactionId;
             
-            document.getElementById('modal-title').textContent = type === 'expense' ? 'Add Expense' : 'Add Income';
-            document.getElementById('submit-btn').textContent = type === 'expense' ? 'Add Expense' : 'Add Income';
+            if (transactionId) {
+                const transaction = data.transactions.find(t => t.id === transactionId);
+                if (transaction) {
+                    document.getElementById('modal-title').textContent = type === 'expense' ? 'Edit Expense' : 'Edit Income';
+                    document.getElementById('submit-btn').textContent = 'Update';
+                    document.getElementById('amount').value = transaction.amount;
+                    document.getElementById('description').value = transaction.description;
+                    document.getElementById('transaction-date').value = new Date(transaction.date).toISOString().split('T')[0];
+                    document.getElementById('is-recurring').checked = transaction.isRecurring || false;
+                    selectedCategory = transaction.category;
+                }
+            } else {
+                document.getElementById('modal-title').textContent = type === 'expense' ? 'Add Expense' : 'Add Income';
+                document.getElementById('submit-btn').textContent = type === 'expense' ? 'Add Expense' : 'Add Income';
+                document.getElementById('amount').value = '';
+                document.getElementById('description').value = '';
+                document.getElementById('sms-text').value = '';
+                document.getElementById('transaction-date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('is-recurring').checked = false;
+            }
             
             const categorySection = document.getElementById('category-section');
+            const recurringSection = document.getElementById('recurring-section');
             categorySection.style.display = 'block';
+            recurringSection.style.display = type === 'expense' ? 'block' : 'none';
             
             renderCategories();
-            
-            document.getElementById('amount').value = '';
-            document.getElementById('description').value = '';
-            document.getElementById('sms-text').value = '';
-            document.getElementById('transaction-date').value = new Date().toISOString().split('T')[0];
-            
             document.getElementById('transaction-modal').classList.add('show');
         }
 
         function closeModal() {
             document.getElementById('transaction-modal').classList.remove('show');
+            editingTransactionId = null;
         }
 
         function renderCategories() {
             const categories = currentModalType === 'expense' ? data.expenseCategories : data.incomeCategories;
             const grid = document.getElementById('category-grid');
             grid.innerHTML = categories.map(cat => 
-                `<button class="category-btn" onclick="selectCategory('${cat}')">${cat}</button>`
+                `<button class="category-btn ${cat === selectedCategory ? 'selected' : ''}" onclick="selectCategory('${cat}')">${cat}</button>`
             ).join('');
         }
 
@@ -949,6 +991,7 @@
             const amount = parseFloat(document.getElementById('amount').value);
             const description = document.getElementById('description').value || (currentModalType === 'expense' ? 'Expense' : 'Income');
             const dateInput = document.getElementById('transaction-date').value;
+            const isRecurring = currentModalType === 'expense' ? document.getElementById('is-recurring').checked : false;
             
             if (!amount || amount <= 0) {
                 alert('Please enter a valid amount');
@@ -960,21 +1003,43 @@
                 return;
             }
 
-            const transaction = {
-                id: Date.now(),
-                type: currentModalType,
-                amount,
-                category: selectedCategory,
-                description,
-                date: dateInput ? new Date(dateInput).toISOString() : new Date().toISOString()
-            };
+            if (editingTransactionId) {
+                const index = data.transactions.findIndex(t => t.id === editingTransactionId);
+                if (index !== -1) {
+                    data.transactions[index] = {
+                        ...data.transactions[index],
+                        amount,
+                        category: selectedCategory,
+                        description,
+                        date: dateInput ? new Date(dateInput).toISOString() : data.transactions[index].date,
+                        isRecurring
+                    };
+                }
+            } else {
+                const transaction = {
+                    id: Date.now(),
+                    type: currentModalType,
+                    amount,
+                    category: selectedCategory,
+                    description,
+                    date: dateInput ? new Date(dateInput).toISOString() : new Date().toISOString(),
+                    isRecurring
+                };
+                data.transactions.unshift(transaction);
+            }
 
-            data.transactions.unshift(transaction);
             saveData();
             updateUI();
             closeModal();
             
-            alert('✅ Transaction added!');
+            alert(editingTransactionId ? '✅ Transaction updated!' : '✅ Transaction added!');
+        }
+
+        function editTransaction(id) {
+            const transaction = data.transactions.find(t => t.id === id);
+            if (transaction) {
+                openModal(transaction.type, id);
+            }
         }
 
         function renderRecentTransactions() {
@@ -994,13 +1059,14 @@
                             ${t.type === 'expense' ? '💸' : '💰'}
                         </div>
                         <div class="transaction-details">
-                            <div class="transaction-title">${t.description}</div>
+                            <div class="transaction-title">${t.description}${t.isRecurring ? ' 🔄' : ''}</div>
                             <div class="transaction-meta">${t.category} • ${date.toLocaleDateString()}</div>
                         </div>
                         <div class="transaction-amount ${t.type}">
                             ${t.type === 'expense' ? '-' : '+'}₹${t.amount.toFixed(0)}
                         </div>
-                        <button class="delete-btn" onclick="deleteTransaction(${t.id})">✕</button>
+                        <button class="icon-btn" onclick="editTransaction(${t.id})">✏️</button>
+                        <button class="icon-btn" onclick="deleteTransaction(${t.id})">✕</button>
                     </div>
                 `;
             }).join('');
@@ -1023,13 +1089,14 @@
                             ${t.type === 'expense' ? '💸' : '💰'}
                         </div>
                         <div class="transaction-details">
-                            <div class="transaction-title">${t.description}</div>
+                            <div class="transaction-title">${t.description}${t.isRecurring ? ' 🔄' : ''}</div>
                             <div class="transaction-meta">${t.category} • ${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                         </div>
                         <div class="transaction-amount ${t.type}">
                             ${t.type === 'expense' ? '-' : '+'}₹${t.amount.toFixed(0)}
                         </div>
-                        <button class="delete-btn" onclick="deleteTransaction(${t.id})">✕</button>
+                        <button class="icon-btn" onclick="editTransaction(${t.id})">✏️</button>
+                        <button class="icon-btn" onclick="deleteTransaction(${t.id})">✕</button>
                     </div>
                 `;
             }).join('');
@@ -1083,7 +1150,7 @@
                                 <div class="transaction-item">
                                     <div class="transaction-icon ${t.type}">${t.type === 'expense' ? '💸' : '💰'}</div>
                                     <div class="transaction-details">
-                                        <div class="transaction-title">${t.description}</div>
+                                        <div class="transaction-title">${t.description}${t.isRecurring ? ' 🔄' : ''}</div>
                                         <div class="transaction-meta">${t.category}</div>
                                     </div>
                                     <div class="transaction-amount ${t.type}">${t.type === 'expense' ? '-' : '+'}₹${t.amount.toFixed(0)}</div>
@@ -1172,7 +1239,7 @@
                     ${data.expenseCategories.map((cat, idx) => `
                         <div class="category-item">
                             <span>${cat}</span>
-                            ${idx >= DEFAULT_EXPENSE_CATEGORIES.length ? `<button class="delete-btn" onclick="deleteCategory('expense', ${idx})">✕</button>` : ''}
+                            ${idx >= DEFAULT_EXPENSE_CATEGORIES.length ? `<button class="icon-btn" onclick="deleteCategory('expense', ${idx})">✕</button>` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -1181,7 +1248,7 @@
                     ${data.incomeCategories.map((cat, idx) => `
                         <div class="category-item">
                             <span>${cat}</span>
-                            ${idx >= DEFAULT_INCOME_CATEGORIES.length ? `<button class="delete-btn" onclick="deleteCategory('income', ${idx})">✕</button>` : ''}
+                            ${idx >= DEFAULT_INCOME_CATEGORIES.length ? `<button class="icon-btn" onclick="deleteCategory('income', ${idx})">✕</button>` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -1275,15 +1342,236 @@
             }
         }
 
-        function exportData() {
-            const dataStr = JSON.stringify(data, null, 2);
-            const blob = new Blob([dataStr], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `expense-tracker-${new Date().toISOString().split('T')[0]}.json`;
-            a.click();
-            alert('✅ Data exported!');
+        // PDF Generation with Charts and AI Insights
+        async function generatePDF() {
+            alert('⏳ Generating your professional expense analysis report...\n\nThis may take a few seconds.');
+            
+            try {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                const thisMonth = data.transactions.filter(t => isThisMonth(t.date));
+                const expenses = thisMonth.filter(t => t.type === 'expense');
+                const income = thisMonth.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+                const totalExpenses = expenses.reduce((sum, t) => sum + t.amount, 0);
+                
+                // Title
+                doc.setFontSize(24);
+                doc.setTextColor(0, 102, 255);
+                doc.text('Expense Analysis Report', 20, 20);
+                
+                doc.setFontSize(12);
+                doc.setTextColor(100);
+                doc.text(new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }), 20, 28);
+                
+                // Summary
+                let y = 45;
+                doc.setFontSize(16);
+                doc.setTextColor(0);
+                doc.text('Financial Summary', 20, y);
+                
+                y += 10;
+                doc.setFontSize(11);
+                doc.setTextColor(60);
+                doc.text(`Total Income: Rs ${income.toFixed(2)}`, 25, y);
+                y += 7;
+                doc.text(`Total Expenses: Rs ${totalExpenses.toFixed(2)}`, 25, y);
+                y += 7;
+                doc.setTextColor(income - totalExpenses >= 0 ? [0, 200, 83] : [255, 59, 48]);
+                doc.text(`Balance: Rs ${(income - totalExpenses).toFixed(2)}`, 25, y);
+                
+                // Category Breakdown
+                y += 15;
+                doc.setFontSize(16);
+                doc.setTextColor(0);
+                doc.text('Spending by Category', 20, y);
+                
+                const categoryTotals = {};
+                expenses.forEach(t => {
+                    categoryTotals[t.category] = (categoryTotals[t.category] || 0) + t.amount;
+                });
+                
+                y += 10;
+                doc.setFontSize(10);
+                Object.entries(categoryTotals)
+                    .sort((a, b) => b[1] - a[1])
+                    .forEach(([category, amount]) => {
+                        const percent = (amount / totalExpenses * 100).toFixed(1);
+                        doc.setTextColor(60);
+                        doc.text(`${category}: Rs ${amount.toFixed(0)} (${percent}%)`, 25, y);
+                        
+                        // Progress bar
+                        const barWidth = (amount / totalExpenses) * 150;
+                        doc.setFillColor(0, 102, 255);
+                        doc.rect(25, y + 2, barWidth, 3, 'F');
+                        
+                        y += 12;
+                    });
+                
+                // AI Insights
+                y += 10;
+                doc.setFontSize(16);
+                doc.setTextColor(0);
+                doc.text('AI-Powered Insights', 20, y);
+                
+                y += 10;
+                doc.setFontSize(10);
+                doc.setTextColor(60);
+                
+                // Analyze spending patterns
+                const insights = generateInsights(data.transactions);
+                insights.forEach(insight => {
+                    const lines = doc.splitTextToSize(`• ${insight}`, 170);
+                    lines.forEach(line => {
+                        if (y > 270) {
+                            doc.addPage();
+                            y = 20;
+                        }
+                        doc.text(line, 25, y);
+                        y += 6;
+                    });
+                    y += 3;
+                });
+                
+                // Recommendations
+                y += 10;
+                if (y > 250) {
+                    doc.addPage();
+                    y = 20;
+                }
+                
+                doc.setFontSize(16);
+                doc.setTextColor(0);
+                doc.text('Expert Recommendations', 20, y);
+                
+                y += 10;
+                doc.setFontSize(10);
+                doc.setTextColor(60);
+                
+                const recommendations = generateRecommendations(data.transactions, income, totalExpenses);
+                recommendations.forEach(rec => {
+                    const lines = doc.splitTextToSize(`✓ ${rec}`, 170);
+                    lines.forEach(line => {
+                        if (y > 270) {
+                            doc.addPage();
+                            y = 20;
+                        }
+                        doc.text(line, 25, y);
+                        y += 6;
+                    });
+                    y += 3;
+                });
+                
+                // Footer
+                const pageCount = doc.internal.getNumberOfPages();
+                for (let i = 1; i <= pageCount; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(8);
+                    doc.setTextColor(150);
+                    doc.text(`Generated on ${new Date().toLocaleString()} | Page ${i} of ${pageCount}`, 20, 285);
+                }
+                
+                // Save
+                const fileName = `expense-analysis-${new Date().toISOString().split('T')[0]}.pdf`;
+                doc.save(fileName);
+                
+                alert('✅ PDF report generated successfully!\n\nCheck your downloads folder.');
+            } catch (error) {
+                console.error('PDF generation error:', error);
+                alert('❌ Error generating PDF. Please try again.');
+            }
+        }
+
+        function generateInsights(transactions) {
+            const insights = [];
+            const thisMonth = transactions.filter(t => isThisMonth(t.date));
+            const expenses = thisMonth.filter(t => t.type === 'expense');
+            
+            // Weekly patterns
+            const weeklySpending = {};
+            expenses.forEach(t => {
+                const week = Math.ceil(new Date(t.date).getDate() / 7);
+                weeklySpending[week] = (weeklySpending[week] || 0) + t.amount;
+            });
+            
+            const weeks = Object.entries(weeklySpending).sort((a, b) => b[1] - a[1]);
+            if (weeks.length > 0) {
+                insights.push(`Highest spending in Week ${weeks[0][0]} (Rs ${weeks[0][1].toFixed(0)}). ${getWeekExplanation(weeks[0][0])}`);
+            }
+            
+            // Category insights
+            const categoryTotals = {};
+            expenses.forEach(t => {
+                categoryTotals[t.category] = (categoryTotals[t.category] || 0) + t.amount;
+            });
+            
+            const topCategory = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1])[0];
+            if (topCategory) {
+                insights.push(`${topCategory[0]} is your top expense (Rs ${topCategory[1].toFixed(0)}). ${getCategoryAdvice(topCategory[0])}`);
+            }
+            
+            // Recurring expenses
+            const recurring = expenses.filter(t => t.isRecurring);
+            if (recurring.length > 0) {
+                const recurringTotal = recurring.reduce((sum, t) => sum + t.amount, 0);
+                const nonRecurringTotal = expenses.filter(t => !t.isRecurring).reduce((sum, t) => sum + t.amount, 0);
+                insights.push(`Fixed monthly expenses (Rs ${recurringTotal.toFixed(0)}) account for ${(recurringTotal/(recurringTotal + nonRecurringTotal)*100).toFixed(0)}% of spending. These are predictable and easier to budget.`);
+            }
+            
+            // Daily average
+            const avgDaily = expenses.reduce((sum, t) => sum + t.amount, 0) / new Date().getDate();
+            insights.push(`Your average daily spending is Rs ${avgDaily.toFixed(0)}. At this rate, monthly expenses will reach Rs ${(avgDaily * 30).toFixed(0)}.`);
+            
+            return insights;
+        }
+
+        function getWeekExplanation(week) {
+            const explanations = {
+                1: "Early month spending is common - bills, rent, and EMIs often hit in the first week.",
+                2: "Mid-month expenses tend to be discretionary spending like dining and entertainment.",
+                3: "Week 3 spending might include weekend activities and shopping.",
+                4: "End-of-month spending could indicate budget strain or delayed payments."
+            };
+            return explanations[week] || "Monitor weekly patterns to identify spending triggers.";
+        }
+
+        function getCategoryAdvice(category) {
+            const advice = {
+                '🍔 Food & Dining': "Consider meal planning and cooking at home to reduce costs.",
+                '🚗 Transport': "Carpooling or public transport could significantly cut expenses.",
+                '🛍️ Shopping': "Wait 24 hours before non-essential purchases to avoid impulse buying.",
+                '💡 Bills & Utilities': "Review subscriptions monthly and cancel unused services.",
+                '🎬 Entertainment': "Look for free community events or home entertainment options.",
+                '🏠 Rent/EMI': "This is a fixed expense - focus on reducing variable costs in other categories.",
+                '👔 Responsibilities': "Plan for recurring obligations to avoid last-minute expenses."
+            };
+            return advice[category] || "Track this category closely to identify savings opportunities.";
+        }
+
+        function generateRecommendations(transactions, income, totalExpenses) {
+            const recommendations = [];
+            const savings = income - totalExpenses;
+            const savingsRate = income > 0 ? (savings / income * 100) : 0;
+            
+            if (savingsRate < 20) {
+                recommendations.push("Aim to save at least 20% of your income. Start with the 50/30/20 rule: 50% needs, 30% wants, 20% savings.");
+            } else {
+                recommendations.push(`Great job! You're saving ${savingsRate.toFixed(0)}% of income. Consider investing surplus in mutual funds or fixed deposits.`);
+            }
+            
+            const expenses = transactions.filter(t => isThisMonth(t.date) && t.type === 'expense');
+            const nonRecurring = expenses.filter(t => !t.isRecurring);
+            const avgNonRecurring = nonRecurring.reduce((sum, t) => sum + t.amount, 0) / Math.max(nonRecurring.length, 1);
+            
+            if (avgNonRecurring > 500) {
+                recommendations.push("Set a daily spending limit of Rs 500 for non-essential items to control discretionary expenses.");
+            }
+            
+            recommendations.push("Mark all recurring expenses (rent, EMI, subscriptions) to separate them from daily variable costs.");
+            recommendations.push("Review expenses weekly rather than monthly to catch overspending early.");
+            recommendations.push("Build an emergency fund equal to 6 months of expenses for financial security.");
+            
+            return recommendations;
         }
 
         // Update greeting
