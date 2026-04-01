@@ -809,12 +809,18 @@
 
         // Load data
         function loadData() {
-            const saved = localStorage.getItem('expenseTrackerProData');
+            const saved = localStorage.getItem('expenseTrackerData');
             if (saved) {
                 const loaded = JSON.parse(saved);
                 // Migrate old data if exists
                 if (loaded.expenses && !loaded.transactions) {
                     data.transactions = loaded.expenses.map(e => ({...e, type: 'expense'}));
+                    // Keep old income if it exists
+                    if (loaded.income) {
+                        data.monthlyIncome = loaded.income;
+                    }
+                    data.expenseCategories = loaded.categories || data.expenseCategories;
+                    data.limits = loaded.limits || data.limits;
                 } else {
                     data = loaded;
                 }
@@ -829,7 +835,7 @@
         }
 
         function saveData() {
-            localStorage.setItem('expenseTrackerProData', JSON.stringify(data));
+            localStorage.setItem('expenseTrackerData', JSON.stringify(data));
         }
 
         function updateUI() {
